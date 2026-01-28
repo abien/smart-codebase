@@ -6,7 +6,6 @@
 import type { PluginInput, Hooks } from "@opencode-ai/plugin";
 import type { PluginConfig, Fact, GraphEdge, KnowledgeGraph } from "../types";
 import { appendFact } from "../storage/knowledge-writer";
-import { getKnowledgeDirectory } from "../storage/knowledge-writer";
 import { linkFact } from "../linking/knowledge-linker";
 import { unwrapData, extractTextFromParts, withTimeout } from "../utils/sdk-helpers";
 import { displayExtractionResult } from "../display/feedback";
@@ -18,50 +17,18 @@ type ToolExecuteAfterInput = Parameters<NonNullable<Hooks["tool.execute.after"]>
 type ToolExecuteAfterOutput = Parameters<NonNullable<Hooks["tool.execute.after"]>>[1];
 type EventInput = Parameters<NonNullable<Hooks["event"]>>[0];
 
-/**
- * Creates the knowledge extraction hook
- * 
- * Implements:
- * - event hook for session.idle (with 30s debounce)
- * - event hook for session.deleted (cleanup)
- * - tool.execute.after hook for tracking file modifications
- * 
- * @param ctx - Plugin input context
- * @param config - Plugin configuration
- * @returns Hook handlers object
- */
-export function createKnowledgeExtractorHook(ctx: PluginInput, config?: PluginConfig) {
-  // Session state: Map<sessionID, debounceTimeout>
-  const sessionDebounceTimers = new Map<string, NodeJS.Timeout>();
-  
-  // Session state: Map<sessionID, Set<filePath>>
-  // Tracks which files were modified in each session
-  const sessionModifiedFiles = new Map<string, Set<string>>();
+const sessionDebounceTimers = new Map<string, NodeJS.Timeout>();
+const sessionModifiedFiles = new Map<string, Set<string>>();
+const sessionExtractionInProgress = new Map<string, boolean>();
 
-  // Session state: Map<sessionID, boolean>
-  // Prevents concurrent extractions for the same session
-  const sessionExtractionInProgress = new Map<string, boolean>();
-
-  /**
-   * Gets or creates the modified files set for a session
-   */
-  function getModifiedFiles(sessionID: string): Set<string> {
-    if (!sessionModifiedFiles.has(sessionID)) {
-      sessionModifiedFiles.set(sessionID, new Set<string>());
-    }
-    return sessionModifiedFiles.get(sessionID)!;
+function getModifiedFiles(sessionID: string): Set<string> {
+  if (!sessionModifiedFiles.has(sessionID)) {
+    sessionModifiedFiles.set(sessionID, new Set<string>());
   }
+  return sessionModifiedFiles.get(sessionID)!;
+}
 
-  /**
-   * Extracts knowledge from a session using AI analysis
-   * 
-   * Creates a sub-session to analyze modified files and extract structured facts.
-   * Each fact is stored and linked to related knowledge.
-   * 
-   * @param ctx - Plugin input context
-   * @param sessionID - Session identifier
-   */
-  async function extractKnowledge(ctx: PluginInput, sessionID: string): Promise<{ facts: Fact[], links: GraphEdge[] }> {
+export async function extractKnowledge(ctx: PluginInput, sessionID: string): Promise<{ facts: Fact[], links: GraphEdge[] }> {
     // Check if extraction already in progress for this session
     if (sessionExtractionInProgress.get(sessionID)) {
       console.log(`[smart-codebase] Extraction already in progress for session ${sessionID}, skipping`);
@@ -236,30 +203,21 @@ If no significant learnings, return empty array: []`;
     }
   }
 
-  /**
-   * Validates that an object has all required Fact fields
-   * 
-   * @param obj - Object to validate
-   * @returns True if object is a valid Fact
-   */
-  function isValidFact(obj: unknown): obj is Fact {
-    if (typeof obj !== 'object' || obj === null) return false;
-    const fact = obj as Record<string, unknown>;
-    
-    return (
-      typeof fact.id === 'string' &&
-      typeof fact.subject === 'string' &&
-      typeof fact.fact === 'string' &&
-      Array.isArray(fact.citations) &&
-      Array.isArray(fact.keywords) &&
-      ['high', 'medium', 'low'].includes(fact.importance as string)
-    );
-  }
+function isValidFact(obj: unknown): obj is Fact {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const fact = obj as Record<string, unknown>;
+  
+  return (
+    typeof fact.id === 'string' &&
+    typeof fact.subject === 'string' &&
+    typeof fact.fact === 'string' &&
+    Array.isArray(fact.citations) &&
+    Array.isArray(fact.keywords) &&
+    ['high', 'medium', 'low'].includes(fact.importance as string)
+  );
+}
 
-  /**
-   * Tool execution after hook
-   * Tracks file modifications from Write and Edit tools
-   */
+export function createKnowledgeExtractorHook(ctx: PluginInput, config?: PluginConfig) {
   const toolExecuteAfter = async (
     input: ToolExecuteAfterInput,
     output: ToolExecuteAfterOutput,
@@ -284,10 +242,6 @@ If no significant learnings, return empty array: []`;
     }
   };
 
-  /**
-   * Event handler
-   * Handles session.idle and session.deleted events
-   */
   const eventHandler = async ({ event }: EventInput) => {
     const props = event.properties as Record<string, unknown> | undefined;
 

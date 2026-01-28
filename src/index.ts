@@ -4,8 +4,10 @@ import { statusCommand } from "./commands/status";
 import { rebuildIndexCommand } from "./commands/rebuild-index";
 import { createContextInjectorHook } from "./hooks/context-injector";
 import { createKnowledgeExtractorHook } from "./hooks/knowledge-extractor";
+import { setPluginInput } from "./plugin-context";
 
 const SmartCodebasePlugin: Plugin = async (input) => {
+  setPluginInput(input);
   // 插件加载通知
   await input.client.tui.showToast({
     body: {
