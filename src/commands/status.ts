@@ -1,35 +1,27 @@
 import { tool } from "@opencode-ai/plugin";
 import { join } from "path";
-import type { KnowledgeGraph } from "../types";
-import { loadKnowledge } from "../storage/knowledge-loader";
-import { fileExists, readTextFile } from "../utils/fs-compat";
+import type { KnowledgeStats } from "../types";
+import { fileExists, findFiles } from "../utils/fs-compat";
 
 export const statusCommand = tool({
   description: "Display smart-codebase knowledge base status",
   args: {},
   async execute(_input, ctx) {
     try {
-      const allFacts = await loadKnowledge(ctx.directory);
-      const totalFacts = allFacts.length;
+      const stats = await getKnowledgeStats(ctx.directory);
       
-      const graphPath = join(ctx.directory, '.codebase-memory', 'graph.json');
-      let totalLinks = 0;
-      try {
-        if (await fileExists(graphPath)) {
-          const graphContent = await readTextFile(graphPath);
-          const graph: KnowledgeGraph = JSON.parse(graphContent);
-          totalLinks = graph.edges.length;
-        }
-      } catch (error) {
-        console.error('[smart-codebase] Failed to load graph:', error);
-      }
+      const indexStatus = stats.hasGlobalIndex ? '✅ 存在' : '❌ 未创建';
+      const moduleList = stats.modules.length > 0 
+        ? stats.modules.map(m => `  - ${m}`).join('\n')
+        : '  (暂无)';
       
       return `📚 smart-codebase 知识库状态
 
-知识点总数: ${totalFacts}
-知识链接数: ${totalLinks}
-存储位置: .knowledge/facts.jsonl
-图谱位置: .codebase-memory/graph.json`;
+全局索引 (KNOWLEDGE.md): ${indexStatus}
+模块知识数量: ${stats.moduleCount}
+
+已有知识的模块:
+${moduleList}`;
       
     } catch (error) {
       console.error('[smart-codebase] Status command failed:', error);
@@ -37,3 +29,21 @@ export const statusCommand = tool({
     }
   },
 });
+
+async function getKnowledgeStats(projectRoot: string): Promise<KnowledgeStats> {
+  const indexPath = join(projectRoot, 'KNOWLEDGE.md');
+  const hasGlobalIndex = await fileExists(indexPath);
+  
+  const skillFiles = await findFiles('**/.knowledge/SKILL.md', {
+    cwd: projectRoot,
+    absolute: false,
+  });
+  
+  const modules = skillFiles.map(f => f.replace('/.knowledge/SKILL.md', ''));
+  
+  return {
+    hasGlobalIndex,
+    moduleCount: modules.length,
+    modules,
+  };
+}

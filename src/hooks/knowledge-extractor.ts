@@ -1,17 +1,15 @@
-/**
- * Knowledge extraction hook for smart-codebase plugin
- * Monitors session idle events and extracts knowledge from completed tasks
- */
-
 import type { PluginInput, Hooks } from "@opencode-ai/plugin";
-import type { PluginConfig, Fact, GraphEdge, KnowledgeGraph } from "../types";
-import { appendFact } from "../storage/knowledge-writer";
-import { linkFact } from "../linking/knowledge-linker";
+import type { PluginConfig } from "../types";
+import { 
+  writeModuleSkill, 
+  updateGlobalIndex, 
+  getModulePath,
+  toSkillName,
+  type SkillContent,
+  type IndexEntry
+} from "../storage/knowledge-writer";
 import { unwrapData, extractTextFromParts, withTimeout } from "../utils/sdk-helpers";
 import { displayExtractionResult } from "../display/feedback";
-import { loadKnowledge } from "../storage/knowledge-loader";
-import { fileExists, readTextFile } from "../utils/fs-compat";
-import { join } from "path";
 
 type ToolExecuteAfterInput = Parameters<NonNullable<Hooks["tool.execute.after"]>>[0];
 type ToolExecuteAfterOutput = Parameters<NonNullable<Hooks["tool.execute.after"]>>[1];
@@ -28,207 +26,227 @@ function getModifiedFiles(sessionID: string): Set<string> {
   return sessionModifiedFiles.get(sessionID)!;
 }
 
-export async function extractKnowledge(ctx: PluginInput, sessionID: string): Promise<{ facts: Fact[], links: GraphEdge[] }> {
-    // Check if extraction already in progress for this session
-    if (sessionExtractionInProgress.get(sessionID)) {
-      console.log(`[smart-codebase] Extraction already in progress for session ${sessionID}, skipping`);
-      return { facts: [], links: [] };
+export interface ExtractionResult {
+  modulesUpdated: number;
+  sectionsAdded: number;
+  indexUpdated: boolean;
+}
+
+export async function extractKnowledge(
+  ctx: PluginInput, 
+  sessionID: string
+): Promise<ExtractionResult> {
+  if (sessionExtractionInProgress.get(sessionID)) {
+    console.log(`[smart-codebase] Extraction already in progress for session ${sessionID}, skipping`);
+    return { modulesUpdated: 0, sectionsAdded: 0, indexUpdated: false };
+  }
+
+  sessionExtractionInProgress.set(sessionID, true);
+
+  let extractionSessionID: string | undefined;
+  const result: ExtractionResult = { modulesUpdated: 0, sectionsAdded: 0, indexUpdated: false };
+
+  try {
+    const modifiedFiles = sessionModifiedFiles.get(sessionID);
+
+    if (!modifiedFiles || modifiedFiles.size === 0) {
+      console.log(`[smart-codebase] No files modified in session ${sessionID}, skipping extraction`);
+      return result;
     }
 
-    // Mark extraction as in progress
-    sessionExtractionInProgress.set(sessionID, true);
+    console.log(`[smart-codebase] Knowledge extraction triggered for session ${sessionID}`);
+    console.log(`[smart-codebase] Modified files (${modifiedFiles.size}):`, Array.from(modifiedFiles));
 
-    let extractionSessionID: string | undefined;
-    const storedFacts: Fact[] = [];
-    const createdLinks: GraphEdge[] = [];
-    
-    try {
-      const modifiedFiles = sessionModifiedFiles.get(sessionID);
-      
-       // No files modified - nothing to extract
-       if (!modifiedFiles || modifiedFiles.size === 0) {
-         console.log(`[smart-codebase] No files modified in session ${sessionID}, skipping extraction`);
-         return { facts: [], links: [] };
-       }
+    const messagesResult = await ctx.client.session.messages({
+      path: { id: sessionID }
+    });
 
-      console.log(`[smart-codebase] Knowledge extraction triggered for session ${sessionID}`);
-      console.log(`[smart-codebase] Modified files (${modifiedFiles.size}):`, Array.from(modifiedFiles));
+    if (messagesResult.error) {
+      console.error('[smart-codebase] Failed to fetch parent session messages:', messagesResult.error);
+      return result;
+    }
 
-      // 1. Create extraction sub-session
-      const createResult = await ctx.client.session.create({
-        body: {
-          title: 'Knowledge Extraction',
-          parentID: sessionID,
-        }
-      });
-      const sessionData = unwrapData(createResult as any) as { id: string };
-      extractionSessionID = sessionData.id;
-      console.log(`[smart-codebase] Created extraction session: ${extractionSessionID}`);
+    const messages = messagesResult.data;
+    const userMessages = messages
+      .filter((msg: any) => msg.role === 'user')
+      .map((msg: any) => {
+        const textParts = msg.parts
+          ?.filter((p: any) => p.type === 'text')
+          .map((p: any) => p.text)
+          .join('\n') || '';
+        return textParts;
+      })
+      .filter((text: string) => text.length > 0);
 
-      // 2. Build extraction prompt
-      const modifiedFilesList = Array.from(modifiedFiles)
-        .slice(0, 20) // Limit to first 20 files
-        .map(f => `- ${f}`)
-        .join('\n');
+    const createResult = await ctx.client.session.create({
+      body: {
+        title: 'Knowledge Extraction',
+        parentID: sessionID,
+      }
+    });
 
-      const extractionPrompt = `You are analyzing code changes from a completed task. Based on the following modified files, extract key learnings as structured knowledge.
+    if (createResult.error) {
+      console.error('[smart-codebase] Failed to create extraction session:', createResult.error);
+      return result;
+    }
 
-Modified files:
+    extractionSessionID = createResult.data.id;
+    console.log(`[smart-codebase] Created extraction session: ${extractionSessionID}`);
+
+    const modifiedFilesList = Array.from(modifiedFiles)
+      .slice(0, 20)
+      .map(f => `- ${f}`)
+      .join('\n');
+
+    const conversationContext = userMessages
+      .map((msg: string, idx: number) => `[User message ${idx + 1}]\n${msg}`)
+      .join('\n\n');
+
+    const systemContext = `You are extracting knowledge for a Claude Skill file (SKILL.md).
+
+CONVERSATION HISTORY:
+${conversationContext}
+
+FILES MODIFIED:
 ${modifiedFilesList}
 
-Extract facts about:
-1. Patterns or conventions discovered
-2. Important gotchas or notes to remember  
-3. Relationships between files/modules
+YOUR TASK:
+1. Use Read tool to examine the modified files
+2. Use git diff (via Bash) to see what changed
+3. Extract knowledge that would help future AI sessions
 
-Return a JSON array of facts. Each fact must have:
-- id: unique UUID (generate one for each fact)
-- subject: topic name (e.g., "Order Status Flow")
-- fact: the knowledge content (1-3 sentences)
-- citations: array of file paths that relate to this fact
-- importance: "high", "medium", or "low"
-- keywords: array of relevant keywords for search
+OUTPUT FORMAT - Return JSON:
+{
+  "skill": {
+    "modulePath": "src/invoice",
+    "name": "invoice-processing",
+    "description": "Handles invoice form validation and submission. Use when modifying invoice-related forms or validation logic.",
+    "sections": [
+      {
+        "heading": "Form validation",
+        "content": "Amount field uses Decimal type to avoid precision issues.\\nInvoice number format: INV-YYYYMMDD-XXXX"
+      }
+    ],
+    "relatedFiles": ["src/invoice/form.tsx"]
+  }
+}
 
-Return ONLY valid JSON array, no markdown code blocks or explanation.
-Example:
-[{"id":"abc123","subject":"Auth Pattern","fact":"JWT tokens stored in httpOnly cookies","citations":["src/auth.ts"],"importance":"high","keywords":["auth","jwt","cookie"]}]
+GUIDELINES:
+- name: lowercase, hyphens only, max 64 chars (e.g., "invoice-processing")
+- description: Third person, includes "Use when..." trigger. Max 200 chars.
+- sections: Concise. Assume Claude knows basics. Only add project-specific knowledge.
+- content: Use \\n for newlines. No verbose explanations.
 
-If no significant learnings, return empty array: []`;
+Return ONLY valid JSON. If no significant learnings: {"skill": null}`;
 
-      // 3. Call AI with timeout
-      console.log(`[smart-codebase] Sending extraction prompt to AI...`);
-      const promptResult = await withTimeout(
-        ctx.client.session.prompt({
-          path: { id: extractionSessionID },
-          body: {
-            parts: [{ type: 'text', text: extractionPrompt }]
-          }
-        }),
-        60000 // 60s timeout
-      );
+    const extractionPrompt = `Analyze the completed work and extract knowledge. Use Read and Bash tools to examine files and diffs.`;
 
-      // 4. Extract and parse response
-      const response = unwrapData(promptResult as any) as { parts: any[] };
-      const text = extractTextFromParts(response.parts);
-      console.log(`[smart-codebase] Received AI response (${text.length} chars)`);
+    console.log(`[smart-codebase] Sending extraction prompt to AI...`);
+    const promptResult = await withTimeout(
+      ctx.client.session.prompt({
+        path: { id: extractionSessionID },
+        body: {
+          system: systemContext,
+          parts: [{ type: 'text', text: extractionPrompt }]
+        }
+      }),
+      120000
+    );
 
-      let facts: unknown[] = [];
+    const response = unwrapData(promptResult as any) as { parts: any[] };
+    const text = extractTextFromParts(response.parts);
+    console.log(`[smart-codebase] Received AI response (${text.length} chars)`);
+
+    let extracted: { skill: any } | null = null;
+    try {
+      let cleanText = text.trim();
+      if (cleanText.startsWith('```')) {
+        cleanText = cleanText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      }
+      extracted = JSON.parse(cleanText);
+    } catch (error) {
+      console.error('[smart-codebase] Failed to parse AI response as JSON:', error);
+      return result;
+    }
+
+    if (!extracted?.skill) {
+      console.log('[smart-codebase] No significant knowledge extracted');
+      return result;
+    }
+
+    const s = extracted.skill;
+
+    const skillContent: SkillContent = {
+      metadata: {
+        name: s.name || toSkillName(s.modulePath),
+        description: s.description || `Handles ${s.modulePath} module. Use when working on related files.`
+      },
+      sections: (s.sections || []).map((sec: any) => ({
+        heading: sec.heading,
+        content: sec.content
+      })),
+      relatedFiles: s.relatedFiles || []
+    };
+
+    const skillPath = await writeModuleSkill(
+      ctx.directory,
+      s.modulePath || '.',
+      skillContent
+    );
+    console.log(`[smart-codebase] Updated module skill: ${skillPath}`);
+    result.modulesUpdated = 1;
+    result.sectionsAdded = skillContent.sections.length;
+
+    const indexEntry: IndexEntry = {
+      name: skillContent.metadata.name,
+      description: skillContent.metadata.description,
+      location: `${s.modulePath || '.'}/.knowledge/SKILL.md`
+    };
+
+    await updateGlobalIndex(ctx.directory, indexEntry);
+    console.log(`[smart-codebase] Updated global knowledge index`);
+    result.indexUpdated = true;
+
+    sessionModifiedFiles.delete(sessionID);
+
+    return result;
+  } catch (error) {
+    console.error(`[smart-codebase] Failed to extract knowledge for session ${sessionID}:`, error);
+    return result;
+  } finally {
+    sessionExtractionInProgress.delete(sessionID);
+
+    if (extractionSessionID) {
       try {
-        // Remove markdown code blocks if present
-        let cleanText = text.trim();
-        if (cleanText.startsWith('```')) {
-          cleanText = cleanText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-        }
-        facts = JSON.parse(cleanText);
-       } catch (error) {
-         console.error('[smart-codebase] Failed to parse AI response as JSON:', error);
-         return { facts: storedFacts, links: createdLinks };
-       }
-
-       if (!Array.isArray(facts)) {
-         console.error('[smart-codebase] AI response is not an array');
-         return { facts: storedFacts, links: createdLinks };
-       }
-
-      console.log(`[smart-codebase] Parsed ${facts.length} facts from AI response`);
-
-       // 5. Validate and store each fact
-       let storedCount = 0;
-       for (const factData of facts) {
-         if (!isValidFact(factData)) {
-           console.warn('[smart-codebase] Skipping invalid fact:', factData);
-           continue;
-         }
-
-         // Add required fields
-         const fact: Fact = {
-           ...factData,
-           timestamp: new Date().toISOString(),
-           learned_from: `Session ${sessionID}`,
-         };
-
-         try {
-           // 6. Store fact
-           await appendFact(ctx.directory, fact);
-           
-           // 7. Link fact
-           await linkFact(fact, ctx.directory);
-           
-           // Collect stored fact and its links
-           storedFacts.push(fact);
-           
-           // Collect links from related_facts
-           if (fact.related_facts && fact.related_facts.length > 0) {
-             for (const relatedId of fact.related_facts) {
-               createdLinks.push({
-                 from: fact.id,
-                 to: relatedId,
-                 relation: 'related'
-               });
-             }
-           }
-           
-           storedCount++;
-           console.log(`[smart-codebase] Stored and linked fact: ${fact.subject}`);
-         } catch (error) {
-           console.error(`[smart-codebase] Failed to store/link fact ${fact.id}:`, error);
-           // Continue with next fact
-         }
-       }
-
-       console.log(`[smart-codebase] Successfully stored ${storedCount}/${facts.length} facts`);
-
-       // Clear modified files after extraction
-       sessionModifiedFiles.delete(sessionID);
-       
-       return { facts: storedFacts, links: createdLinks };
-     } catch (error) {
-       console.error(`[smart-codebase] Failed to extract knowledge for session ${sessionID}:`, error);
-       return { facts: storedFacts, links: createdLinks };
-     } finally {
-       // Clear in-progress flag
-       sessionExtractionInProgress.delete(sessionID);
-       
-       // 8. Always cleanup: delete extraction session
-      if (extractionSessionID) {
-        try {
-          await ctx.client.session.delete({ 
-            path: { id: extractionSessionID } 
-          });
-          console.log(`[smart-codebase] Cleaned up extraction session: ${extractionSessionID}`);
-        } catch (error) {
-          console.error(`[smart-codebase] Failed to cleanup extraction session:`, error);
-        }
+        await ctx.client.session.delete({
+          path: { id: extractionSessionID }
+        });
+        console.log(`[smart-codebase] Cleaned up extraction session: ${extractionSessionID}`);
+      } catch (error) {
+        console.error(`[smart-codebase] Failed to cleanup extraction session:`, error);
       }
     }
   }
-
-function isValidFact(obj: unknown): obj is Fact {
-  if (typeof obj !== 'object' || obj === null) return false;
-  const fact = obj as Record<string, unknown>;
-  
-  return (
-    typeof fact.id === 'string' &&
-    typeof fact.subject === 'string' &&
-    typeof fact.fact === 'string' &&
-    Array.isArray(fact.citations) &&
-    Array.isArray(fact.keywords) &&
-    ['high', 'medium', 'low'].includes(fact.importance as string)
-  );
 }
 
 export function createKnowledgeExtractorHook(ctx: PluginInput, config?: PluginConfig) {
+  const FILE_MODIFICATION_TOOLS = [
+    "write",
+    "edit",
+    "multiedit",
+    "apply_patch",
+    "ast_grep_replace",
+    "lsp_rename",
+  ];
+
   const toolExecuteAfter = async (
     input: ToolExecuteAfterInput,
     output: ToolExecuteAfterOutput,
   ) => {
     const toolName = input.tool.toLowerCase();
 
-    // Track Write and Edit tool executions
-    if (toolName === "write" || toolName === "edit") {
+    if (FILE_MODIFICATION_TOOLS.includes(toolName)) {
       try {
-        // Extract file path from output.title
-        // Both Write and Edit tools set title to the file path
         const filePath = output.title;
 
         if (filePath) {
@@ -245,70 +263,41 @@ export function createKnowledgeExtractorHook(ctx: PluginInput, config?: PluginCo
   const eventHandler = async ({ event }: EventInput) => {
     const props = event.properties as Record<string, unknown> | undefined;
 
-    // Handle session.idle event with debounce
     if (event.type === "session.idle") {
       const sessionID = props?.sessionID as string | undefined;
       if (!sessionID) return;
 
-      // Check if auto-extraction is enabled
       if (config?.autoExtract === false) {
         return;
       }
 
-      // Clear previous debounce timer
       const existingTimer = sessionDebounceTimers.get(sessionID);
       if (existingTimer) {
         clearTimeout(existingTimer);
       }
 
-       // Set new debounce timer (default: 30 seconds)
-       const debounceMs = config?.debounceMs ?? 30000;
-       const timer = setTimeout(async () => {
-         const results = await extractKnowledge(ctx, sessionID);
-         
-         // Get total counts for statistics
-         const allFacts = await loadKnowledge(ctx.directory);
-         const totalFacts = allFacts.length;
-         
-         // Load graph for total link count
-         const graphPath = join(ctx.directory, '.codebase-memory', 'graph.json');
-         let totalLinks = 0;
-         try {
-           if (await fileExists(graphPath)) {
-             const graphContent = await readTextFile(graphPath);
-             const graph: KnowledgeGraph = JSON.parse(graphContent);
-             totalLinks = graph.edges.length;
-           }
-         } catch (error) {
-           console.error('[smart-codebase] Failed to load graph for stats:', error);
-         }
-         
-         // Format and display results
-         const message = displayExtractionResult(
-           results.facts,
-           results.links,
-           totalFacts,
-           totalLinks
-         );
-         
-         // Show toast notification
-         await ctx.client.tui.showToast({
-           body: {
-             title: "smart-codebase",
-             message,
-             variant: "success",
-             duration: 5000,
-           },
-         }).catch(() => {});
-         
-         sessionDebounceTimers.delete(sessionID);
-       }, debounceMs);
+      const debounceMs = config?.debounceMs ?? 15000;
+      const timer = setTimeout(async () => {
+        const extractionResult = await extractKnowledge(ctx, sessionID);
+
+        const message = displayExtractionResult(extractionResult);
+
+        await ctx.client.tui.showToast({
+          body: {
+            title: "smart-codebase",
+            message,
+            variant: "success",
+            duration: 5000,
+          },
+        }).catch(() => {});
+
+        sessionDebounceTimers.delete(sessionID);
+      }, debounceMs);
 
       sessionDebounceTimers.set(sessionID, timer);
       console.log(`[smart-codebase] Session ${sessionID} idle, extraction scheduled in ${debounceMs}ms`);
     }
 
-    // Handle session.deleted event - cleanup
     if (event.type === "session.deleted") {
       const sessionInfo = props?.info as { id?: string } | undefined;
       if (sessionInfo?.id) {

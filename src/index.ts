@@ -21,7 +21,13 @@ const SmartCodebasePlugin: Plugin = async (input) => {
       "sc-rebuild-index": rebuildIndexCommand,
     },
     "tool.execute.after": async (hookInput, output) => {
-      if (!hasShownWelcomeToast) {
+      await knowledgeExtractor["tool.execute.after"]?.(hookInput, output);
+    },
+    "chat.message": async (hookInput, output) => {
+      await contextInjector["chat.message"]?.(hookInput, output);
+    },
+    event: async (hookInput) => {
+      if (!hasShownWelcomeToast && hookInput.event.type === "session.created") {
         hasShownWelcomeToast = true;
         await input.client.tui.showToast({
           body: {
@@ -33,10 +39,6 @@ const SmartCodebasePlugin: Plugin = async (input) => {
         }).catch(() => {});
       }
       
-      await contextInjector["tool.execute.after"]?.(hookInput, output);
-      await knowledgeExtractor["tool.execute.after"]?.(hookInput, output);
-    },
-    event: async (hookInput) => {
       await contextInjector.event?.(hookInput);
       await knowledgeExtractor.event?.(hookInput);
     },

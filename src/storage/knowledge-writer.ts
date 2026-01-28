@@ -1,107 +1,214 @@
-/**
- * Knowledge storage module - JSONL append writer with file locking
- * Handles persistent storage of facts in directory-local .knowledge/ folders
- */
-
 import { mkdir } from 'fs/promises';
-import { join, dirname } from 'path';
-import type { Fact } from '../types';
+import { join, dirname, relative, basename } from 'path';
 import { fileExists, readTextFile, writeTextFile, sleep, removeFile } from '../utils/fs-compat';
 
-/**
- * Appends a fact to the JSONL knowledge file for a given directory
- * 
- * Storage structure:
- * - src/order/service.ts → src/order/.knowledge/facts.jsonl
- * - src/user/hooks/useAuth.ts → src/user/.knowledge/facts.jsonl
- * 
- * @param directory - Target directory path (e.g., "src/order")
- * @param fact - Fact object to append
- * @throws Error if file operations fail
- */
-export async function appendFact(directory: string, fact: Fact): Promise<void> {
-  const knowledgeDir = join(directory, '.knowledge');
-  const factsFile = join(knowledgeDir, 'facts.jsonl');
+export interface SkillMetadata {
+  name: string;
+  description: string;
+}
+
+export interface SkillContent {
+  metadata: SkillMetadata;
+  sections: SkillSection[];
+  relatedFiles?: string[];
+}
+
+export interface SkillSection {
+  heading: string;
+  content: string;
+}
+
+export interface IndexEntry {
+  name: string;
+  description: string;
+  location: string;
+}
+
+export async function writeModuleSkill(
+  projectRoot: string,
+  modulePath: string,
+  skill: SkillContent
+): Promise<string> {
+  const knowledgeDir = join(projectRoot, modulePath, '.knowledge');
+  const skillPath = join(knowledgeDir, 'SKILL.md');
   const lockFile = join(knowledgeDir, '.lock');
 
-  // Ensure .knowledge directory exists
   await mkdir(knowledgeDir, { recursive: true });
 
-  // Acquire file lock with timeout
   const lock = await acquireLock(lockFile, 5000);
-  
+
   try {
-    // Append fact as single-line JSON
-    const line = JSON.stringify(fact) + '\n';
-    const existingContent = await fileExists(factsFile) ? await readTextFile(factsFile) : '';
-    await writeTextFile(factsFile, existingContent + line);
+    let existingContent = '';
+    if (await fileExists(skillPath)) {
+      existingContent = await readTextFile(skillPath);
+    }
+
+    const newContent = mergeSkillContent(existingContent, skill);
+    await writeTextFile(skillPath, newContent);
+
+    return skillPath;
   } finally {
-    // Always release lock
     await releaseLock(lock);
   }
 }
 
-/**
- * Acquires an exclusive file lock using a lock file
- * 
- * @param lockFile - Path to lock file
- * @param timeoutMs - Maximum wait time in milliseconds
- * @returns Lock handle for cleanup
- * @throws Error if lock cannot be acquired within timeout
- */
-async function acquireLock(lockFile: string, timeoutMs: number): Promise<{ file: string; pid: string }> {
-  const startTime = Date.now();
+function mergeSkillContent(existing: string, skill: SkillContent): string {
+  const lines: string[] = [];
+
+  lines.push('---');
+  lines.push(`name: ${skill.metadata.name}`);
+  lines.push(`description: ${skill.metadata.description}`);
+  lines.push('---');
+  lines.push('');
+
+  let existingBody = existing;
+  if (existing.startsWith('---')) {
+    const endFrontmatter = existing.indexOf('---', 3);
+    if (endFrontmatter !== -1) {
+      existingBody = existing.slice(endFrontmatter + 3).trim();
+    }
+  }
+
+  if (existingBody) {
+    lines.push(existingBody);
+  }
+
+  for (const section of skill.sections) {
+    const sectionMarker = `## ${section.heading}`;
+    const currentContent = lines.join('\n');
+
+    if (!currentContent.includes(sectionMarker)) {
+      lines.push('');
+      lines.push(sectionMarker);
+      lines.push('');
+      lines.push(section.content);
+    }
+  }
+
+  if (skill.relatedFiles && skill.relatedFiles.length > 0) {
+    const filesSection = '## Related files';
+    const currentContent = lines.join('\n');
+
+    if (!currentContent.includes(filesSection)) {
+      lines.push('');
+      lines.push(filesSection);
+      lines.push('');
+    }
+
+    for (const file of skill.relatedFiles) {
+      const fileEntry = `- \`${file}\``;
+      if (!currentContent.includes(fileEntry)) {
+        lines.push(fileEntry);
+      }
+    }
+  }
+
+  return lines.join('\n').trim() + '\n';
+}
+
+export async function updateGlobalIndex(
+  projectRoot: string,
+  entry: IndexEntry
+): Promise<void> {
+  const indexPath = join(projectRoot, 'KNOWLEDGE.md');
+  const lockFile = join(projectRoot, '.knowledge.lock');
+
+  const lock = await acquireLock(lockFile, 5000);
+
+  try {
+    let content = '';
+    if (await fileExists(indexPath)) {
+      content = await readTextFile(indexPath);
+    }
+
+    if (!content.includes('# Project Knowledge')) {
+      content = `# Project Knowledge
+
+> Project knowledge index. Read this first to understand available domain knowledge, then read relevant module SKILLs as needed.
+
+`;
+    }
+
+    const entryMarker = `### ${entry.name}`;
+    if (content.includes(entryMarker)) {
+      const entryRegex = new RegExp(
+        `### ${escapeRegex(entry.name)}[\\s\\S]*?(?=\\n### |$)`,
+        'g'
+      );
+      content = content.replace(entryRegex, formatIndexEntry(entry));
+    } else {
+      content = content.trimEnd() + '\n\n' + formatIndexEntry(entry);
+    }
+
+    await writeTextFile(indexPath, content);
+  } finally {
+    await releaseLock(lock);
+  }
+}
+
+function formatIndexEntry(entry: IndexEntry): string {
+  return `### ${entry.name}
+${entry.description}
+- **Location**: \`${entry.location}\`
+`;
+}
+
+export function toSkillName(modulePath: string): string {
+  if (modulePath === '.') return 'project-root';
   
+  return modulePath
+    .replace(/[\/\\]/g, '-')
+    .replace(/[^a-z0-9-]/gi, '')
+    .toLowerCase()
+    .slice(0, 64);
+}
+
+export function getModulePath(filePath: string, projectRoot: string): string {
+  const relativePath = relative(projectRoot, dirname(filePath));
+  const parts = relativePath.split('/').filter(p => p && p !== '.');
+
+  if (parts.length === 0) return '.';
+  if (parts.length === 1) return parts[0];
+
+  return parts.slice(0, 2).join('/');
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function acquireLock(lockFile: string, timeoutMs: number): Promise<{ file: string }> {
+  const startTime = Date.now();
+  const dir = dirname(lockFile);
+
+  await mkdir(dir, { recursive: true });
+
   while (true) {
     try {
-      // Try to create lock file exclusively (fails if exists)
       if (await fileExists(lockFile)) {
         throw { code: 'EEXIST' };
       }
-      const pid = process.pid.toString();
-      await writeTextFile(lockFile, pid);
-      return { file: lockFile, pid };
+      await writeTextFile(lockFile, process.pid.toString());
+      return { file: lockFile };
     } catch (error: any) {
-      // Lock file exists - check if stale
       if (error.code === 'EEXIST') {
-        // Check timeout
         if (Date.now() - startTime > timeoutMs) {
           throw new Error(`Failed to acquire lock on ${lockFile} within ${timeoutMs}ms`);
         }
-        
-        // Wait and retry
         await sleep(50);
         continue;
       }
-      
-      // Other error - propagate
       throw error;
     }
   }
 }
 
-/**
- * Releases a file lock by closing and deleting the lock file
- * 
- * @param lock - Lock handle from acquireLock
- */
-async function releaseLock(lock: { file: string; pid: string }): Promise<void> {
+async function releaseLock(lock: { file: string }): Promise<void> {
   try {
     if (await fileExists(lock.file)) {
       await removeFile(lock.file);
     }
   } catch (error) {
-    // Best effort - log but don't throw
     console.error(`Failed to release lock ${lock.file}:`, error);
   }
-}
-
-/**
- * Determines the knowledge directory for a given file path
- * 
- * @param filePath - Source file path (e.g., "src/order/service.ts")
- * @returns Directory path for knowledge storage (e.g., "src/order")
- */
-export function getKnowledgeDirectory(filePath: string): string {
-  return dirname(filePath);
 }
