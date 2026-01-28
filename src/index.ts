@@ -32,7 +32,7 @@ const SmartCodebasePlugin: Plugin = async (input) => {
   try {
     setPluginInput(input);
     
-    const config = loadConfig(input.directory);
+    const config = loadConfig();
     
     if (!config.enabled) {
       console.log("[smart-codebase] Plugin disabled via config");
@@ -40,7 +40,6 @@ const SmartCodebasePlugin: Plugin = async (input) => {
     }
 
     const disabledCommands = new Set(config.disabledCommands || []);
-    console.log(`[smart-codebase] Disabled commands:`, Array.from(disabledCommands));
     
     const enabledTools: Record<string, typeof extractCommand> = {};
     const enabledCommandConfigs: Record<string, { template: string; description: string }> = {};
@@ -49,8 +48,6 @@ const SmartCodebasePlugin: Plugin = async (input) => {
       if (!disabledCommands.has(name)) {
         enabledTools[name] = command;
         enabledCommandConfigs[name] = COMMAND_CONFIGS[name as keyof typeof COMMAND_CONFIGS];
-      } else {
-        console.log(`[smart-codebase] Command disabled: ${name}`);
       }
     }
 
