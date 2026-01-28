@@ -29,7 +29,7 @@
     "memory"
   ],
   "author": "Sisyphus-Junior",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@opencode-ai/plugin": "^1.1.19",
     "fast-glob": "^3.3.3"

@@ -2,23 +2,23 @@
 
 [English](README.md) | [简体中文](README.zh-cn.md)
 
-> **Turn your OpenCode into a senior project expert that learns and grows with every task.**
+> **让你的 OpenCode 在完成任务时，不断学习成长，变成你独一无二的资深项目专家。**
 
 ---
 
-## 🔥 The Pain Point
+## 🔥 你的痛点
 
-Every time you start a new session, AI starts from scratch. It doesn't remember:
-- Why you chose that architecture?
-- What gotchas exist in your codebase?
-- What patterns your team follows?
-- What you learned from debugging that nasty bug?
+每次开始新会话时，AI 都从零开始。它不记得：
+- 你为什么选择那个架构？
+- 代码库中存在哪些坑？
+- 你的团队遵循什么模式？
+- 你从调试那个棘手的 bug 中学到了什么？
 
-**You explain the same things over and over.**
+**你一遍又一遍地解释同样的事情。**
 
-## ✨ The Solution
+## ✨ 解决方案
 
-smart-codebase automatically captures knowledge from your sessions and makes it available to future sessions.
+smart-codebase 自动从会话中捕获知识，并使其可供未来会话使用。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -55,43 +55,43 @@ smart-codebase automatically captures knowledge from your sessions and makes it 
 
 ---
 
-## 📖 Table of Contents
+## 📖 目录
 
-- [⚙️ How It Works](#️-how-it-works)
-- [📦 Installation](#-installation)
-- [⚡ Commands](#-commands)
-- [⚙️ Configuration](#️-configuration)
-- [📁 File Structure](#-file-structure)
-- [🛠️ Development](#️-development)
-
----
-
-## ⚙️ How It Works
-
-1. **You work normally** - Edit files, debug issues, make decisions
-2. **Session goes idle** - After 15 seconds of inactivity
-3. **Extractor analyzes** - Examines what changed and why
-4. **Knowledge captured** - Stored in `.knowledge/SKILL.md` per module
-5. **Index updated** - Global `.knowledge/KNOWLEDGE.md` tracks all skills
-6. **Next session starts** - Reads KNOWLEDGE.md first, finds relevant skills
-
-**The plugin accumulates knowledge for you. Just focus on coding.**
+- [⚙️ 工作原理](#️-工作原理)
+- [📦 安装](#-安装)
+- [🔧 命令](#-命令)
+- [⚡ 配置](#-配置)
+- [📁 文件结构](#-文件结构)
+- [🛠️ 开发](#️-开发)
 
 ---
 
-## 📦 Installation
+## ⚙️ 工作原理
 
-Navigate to `~/.config/opencode` directory:
+1. **你正常工作** - 编辑文件、调试问题、做决策
+2. **会话空闲** - 15 秒无活动后
+3. **提取器分析** - 检查发生了什么变化以及为什么
+4. **知识被捕获** - 存储在每个模块的 `.knowledge/SKILL.md` 中
+5. **索引更新** - 全局 `.knowledge/KNOWLEDGE.md` 跟踪所有技能
+6. **下次会话开始** - 首先读取 KNOWLEDGE.md，找到相关技能
+
+**插件帮你沉淀知识，你只管鞭策 AI 写代码。**
+
+---
+
+## 📦 安装
+
+进入 `~/.config/opencode` 目录：
 
 ```bash
-# Using bun
+# 使用 bun
 bun add smart-codebase
 
-# Or using npm
+# 或使用 npm
 npm install smart-codebase
 ```
 
-Add to your `opencode.json`:
+添加到你的 `opencode.json`：
 
 ```json
 {
@@ -101,23 +101,23 @@ Add to your `opencode.json`:
 
 ---
 
-## ⚡ Commands
+## ⚡ 命令
 
-| Command | Description |
-|---------|-------------|
-| `/sc-status` | Show knowledge base status |
-| `/sc-extract` | Manually trigger knowledge extraction |
-| `/sc-rebuild-index` | Rebuild `.knowledge/KNOWLEDGE.md` from all SKILL.md files |
+| 命令 | 描述 |
+|------|------|
+| `/sc-status` | 显示知识库状态 |
+| `/sc-extract` | 手动触发知识沉淀 |
+| `/sc-rebuild-index` | 从所有 SKILL.md 文件重建 `.knowledge/KNOWLEDGE.md` |
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ 配置
 
-No configuration required by default. To customize, create `~/.config/opencode/smart-codebase.json` (or `.jsonc`):
+默认无须配置，如需改变默认配置，创建 `~/.config/opencode/smart-codebase.json`（或 `.jsonc`）：
 
 ```jsonc
 {
-  // Example configuration
+  // 示例配置
   "enabled": true,
   "debounceMs": 30000,
   "autoExtract": true,
@@ -126,53 +126,53 @@ No configuration required by default. To customize, create `~/.config/opencode/s
 }
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `enabled` | `true` | Enable/disable the plugin entirely |
-| `debounceMs` | `15000` | Wait time (ms) after session idle before extraction |
-| `autoExtract` | `true` | Automatically extract knowledge on idle |
-| `autoInject` | `true` | Inject knowledge hint at session start |
-| `disabledCommands` | `[]` | Commands to disable, e.g. `["sc-rebuild-index"]` |
+| 选项 | 默认值 | 描述 |
+|------|--------|------|
+| `enabled` | `true` | 完全启用/禁用插件 |
+| `debounceMs` | `15000` | 会话空闲后等待多久（毫秒）才提取 |
+| `autoExtract` | `true` | 空闲时自动提取知识 |
+| `autoInject` | `true` | 会话开始时注入知识提示 |
+| `disabledCommands` | `[]` | 要禁用的命令，如 `["sc-rebuild-index"]` |
 
 ---
 
-## 📁 File Structure Example
+## 📁 文件结构示例
 
 ```
 project/
 ├── .knowledge/
-│   └── KNOWLEDGE.md              # Global index
+│   └── KNOWLEDGE.md              # 全局索引
 │
 ├── src/
 │   ├── auth/
 │   │   ├── .knowledge/
-│   │   │   └── SKILL.md          # Auth module knowledge
+│   │   │   └── SKILL.md          # 认证模块知识
 │   │   ├── session.ts
 │   │   └── jwt.ts
 │   │
 │   └── payments/
 │       ├── .knowledge/
-│       │   └── SKILL.md          # Payments module knowledge
+│       │   └── SKILL.md          # 支付模块知识
 │       └── stripe.ts
 ```
 
 ---
 
-## 🛠️ Development
+## 🛠️ 开发
 
 ```bash
-# Install dependencies
+# 安装依赖
 bun install
 
-# Build
+# 构建
 bun run build
 
-# Type check
+# 类型检查
 bun run typecheck
 ```
 
 ---
 
-## 📄 License
+## 📄 许可证
 
 [Apache-2.0](LICENSE)
