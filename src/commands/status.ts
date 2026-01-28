@@ -10,22 +10,22 @@ export const statusCommand = tool({
     try {
       const stats = await getKnowledgeStats(ctx.directory);
       
-      const indexStatus = stats.hasGlobalIndex ? '✅ 存在' : '❌ 未创建';
+      const indexStatus = stats.hasGlobalIndex ? '✅ exists' : '❌ not created';
       const moduleList = stats.modules.length > 0 
         ? stats.modules.map(m => `  - ${m}`).join('\n')
-        : '  (暂无)';
+        : '  (none)';
       
-      return `📚 smart-codebase 知识库状态
+      return `📚 smart-codebase Knowledge Status
 
-全局索引 (KNOWLEDGE.md): ${indexStatus}
-模块知识数量: ${stats.moduleCount}
+Global index (KNOWLEDGE.md): ${indexStatus}
+Module count: ${stats.moduleCount}
 
-已有知识的模块:
+Modules with knowledge:
 ${moduleList}`;
       
     } catch (error) {
       console.error('[smart-codebase] Status command failed:', error);
-      return `❌ 获取状态失败: ${error instanceof Error ? error.message : String(error)}`;
+      return `❌ Failed to get status: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
 });

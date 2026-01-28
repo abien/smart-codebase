@@ -5,21 +5,58 @@ import { rebuildIndexCommand } from "./commands/rebuild-index";
 import { createContextInjectorHook } from "./hooks/context-injector";
 import { createKnowledgeExtractorHook } from "./hooks/knowledge-extractor";
 import { setPluginInput } from "./plugin-context";
+import { loadConfig } from "./config";
+
+const ALL_COMMANDS = {
+  "sc-extract": extractCommand,
+  "sc-status": statusCommand,
+  "sc-rebuild-index": rebuildIndexCommand,
+} as const;
+
+const COMMAND_CONFIGS = {
+  "sc-extract": {
+    template: "Use sc-extract to manually trigger knowledge extraction. Analyzes modified files in current session and extracts valuable knowledge.",
+    description: "Manually trigger knowledge extraction",
+  },
+  "sc-status": {
+    template: "Use sc-status to display knowledge base status. Shows module count and index status.",
+    description: "Display knowledge base status",
+  },
+  "sc-rebuild-index": {
+    template: "Use sc-rebuild-index to rebuild global knowledge index. Scans all .knowledge/ directories and rebuilds KNOWLEDGE.md.",
+    description: "Rebuild knowledge index",
+  },
+} as const;
 
 const SmartCodebasePlugin: Plugin = async (input) => {
   setPluginInput(input);
+  
+  const config = await loadConfig(input.directory);
+  
+  if (!config.enabled) {
+    console.log("[smart-codebase] Plugin disabled via config");
+    return {};
+  }
 
-  const contextInjector = createContextInjectorHook(input);
-  const knowledgeExtractor = createKnowledgeExtractorHook(input);
+  const disabledCommands = new Set(config.disabledCommands || []);
+  
+  const enabledTools: Record<string, typeof extractCommand> = {};
+  const enabledCommandConfigs: Record<string, { template: string; description: string }> = {};
+  
+  for (const [name, command] of Object.entries(ALL_COMMANDS)) {
+    if (!disabledCommands.has(name)) {
+      enabledTools[name] = command;
+      enabledCommandConfigs[name] = COMMAND_CONFIGS[name as keyof typeof COMMAND_CONFIGS];
+    }
+  }
+
+  const contextInjector = createContextInjectorHook(input, config);
+  const knowledgeExtractor = createKnowledgeExtractorHook(input, config);
   
   let hasShownWelcomeToast = false;
 
   return {
-    tool: {
-      "sc-extract": extractCommand,
-      "sc-status": statusCommand,
-      "sc-rebuild-index": rebuildIndexCommand,
-    },
+    tool: enabledTools,
     "tool.execute.after": async (hookInput, output) => {
       await knowledgeExtractor["tool.execute.after"]?.(hookInput, output);
     },
@@ -32,7 +69,7 @@ const SmartCodebasePlugin: Plugin = async (input) => {
         await input.client.tui.showToast({
           body: {
             title: "smart-codebase",
-            message: "📚 插件已启用",
+            message: "Knowledge base active",
             variant: "info",
             duration: 3000,
           },
@@ -42,21 +79,10 @@ const SmartCodebasePlugin: Plugin = async (input) => {
       await contextInjector.event?.(hookInput);
       await knowledgeExtractor.event?.(hookInput);
     },
-    config: async (config) => {
-      config.command = {
-        ...config.command,
-        "sc-extract": {
-          template: "使用 sc-extract 工具手动触发知识提取。分析当前会话中修改的文件，提取有价值的知识点。",
-          description: "手动触发知识提取",
-        },
-        "sc-status": {
-          template: "使用 sc-status 工具显示知识库的当前状态。包括知识点数量、链接数量等统计信息。",
-          description: "显示知识库状态",
-        },
-        "sc-rebuild-index": {
-          template: "使用 sc-rebuild-index 工具重建全局知识索引。扫描所有 .knowledge/ 目录并重新建立链接。",
-          description: "重建知识索引",
-        },
+    config: async (cfg) => {
+      cfg.command = {
+        ...cfg.command,
+        ...enabledCommandConfigs,
       };
     },
   };

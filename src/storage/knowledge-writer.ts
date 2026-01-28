@@ -1,5 +1,5 @@
 import { mkdir } from 'fs/promises';
-import { join, dirname, relative, basename } from 'path';
+import { join, dirname, relative } from 'path';
 import { fileExists, readTextFile, writeTextFile, sleep, removeFile } from '../utils/fs-compat';
 
 export interface SkillMetadata {
@@ -38,21 +38,15 @@ export async function writeModuleSkill(
   const lock = await acquireLock(lockFile, 5000);
 
   try {
-    let existingContent = '';
-    if (await fileExists(skillPath)) {
-      existingContent = await readTextFile(skillPath);
-    }
-
-    const newContent = mergeSkillContent(existingContent, skill);
-    await writeTextFile(skillPath, newContent);
-
+    const content = formatSkillContent(skill);
+    await writeTextFile(skillPath, content);
     return skillPath;
   } finally {
     await releaseLock(lock);
   }
 }
 
-function mergeSkillContent(existing: string, skill: SkillContent): string {
+function formatSkillContent(skill: SkillContent): string {
   const lines: string[] = [];
 
   lines.push('---');
@@ -61,46 +55,20 @@ function mergeSkillContent(existing: string, skill: SkillContent): string {
   lines.push('---');
   lines.push('');
 
-  let existingBody = existing;
-  if (existing.startsWith('---')) {
-    const endFrontmatter = existing.indexOf('---', 3);
-    if (endFrontmatter !== -1) {
-      existingBody = existing.slice(endFrontmatter + 3).trim();
-    }
-  }
-
-  if (existingBody) {
-    lines.push(existingBody);
-  }
-
   for (const section of skill.sections) {
-    const sectionMarker = `## ${section.heading}`;
-    const currentContent = lines.join('\n');
-
-    if (!currentContent.includes(sectionMarker)) {
-      lines.push('');
-      lines.push(sectionMarker);
-      lines.push('');
-      lines.push(section.content);
-    }
+    lines.push(`## ${section.heading}`);
+    lines.push('');
+    lines.push(section.content);
+    lines.push('');
   }
 
   if (skill.relatedFiles && skill.relatedFiles.length > 0) {
-    const filesSection = '## Related files';
-    const currentContent = lines.join('\n');
-
-    if (!currentContent.includes(filesSection)) {
-      lines.push('');
-      lines.push(filesSection);
-      lines.push('');
-    }
-
+    lines.push('## Related files');
+    lines.push('');
     for (const file of skill.relatedFiles) {
-      const fileEntry = `- \`${file}\``;
-      if (!currentContent.includes(fileEntry)) {
-        lines.push(fileEntry);
-      }
+      lines.push(`- \`${file}\``);
     }
+    lines.push('');
   }
 
   return lines.join('\n').trim() + '\n';

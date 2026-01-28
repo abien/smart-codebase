@@ -14,7 +14,7 @@ export const extractCommand = tool({
       return displayExtractionResult(result);
     } catch (error) {
       console.error('[smart-codebase] Extract command failed:', error);
-      return `❌ 提取失败: ${error instanceof Error ? error.message : String(error)}`;
+      return `❌ Extraction failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
 });

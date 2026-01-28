@@ -1,6 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
 import { join, dirname } from "path";
-import { findFiles, readTextFile, fileExists, writeTextFile } from "../utils/fs-compat";
+import { findFiles, readTextFile, writeTextFile } from "../utils/fs-compat";
 
 export const rebuildIndexCommand = tool({
   description: "Rebuild global knowledge base index from all SKILL.md files",
@@ -13,7 +13,7 @@ export const rebuildIndexCommand = tool({
       });
       
       if (skillFiles.length === 0) {
-        return `📭 未找到任何模块知识文件 (.knowledge/SKILL.md)`;
+        return `📭 No module knowledge files found (.knowledge/SKILL.md)`;
       }
       
       const entries: string[] = [];
@@ -23,45 +23,39 @@ export const rebuildIndexCommand = tool({
           const content = await readTextFile(skillPath);
           const modulePath = dirname(dirname(skillPath)).replace(ctx.directory + '/', '');
           
-          const titleMatch = content.match(/^# (.+)$/m);
-          const title = titleMatch ? titleMatch[1] : modulePath;
+          const nameMatch = content.match(/^name:\s*(.+)$/m);
+          const name = nameMatch ? nameMatch[1].trim() : modulePath;
           
-          const descMatch = content.match(/^> (.+)$/m);
-          const description = descMatch ? descMatch[1] : `${title} 相关知识`;
+          const descMatch = content.match(/^description:\s*(.+)$/m);
+          const description = descMatch ? descMatch[1].trim() : `Handles ${name} module.`;
           
-          const keywordsMatch = content.match(/Keywords?:\s*(.+)/i);
-          const keywords = keywordsMatch 
-            ? keywordsMatch[1].split(/[,，]/).map(k => k.trim()).filter(Boolean)
-            : [];
-          
-          entries.push(`## ${title}
-> ${description}
+          entries.push(`### ${name}
+${description}
 - **Location**: \`${modulePath}/.knowledge/SKILL.md\`
-- **Keywords**: ${keywords.length > 0 ? keywords.join(', ') : title}
 `);
         } catch (error) {
           console.warn(`[smart-codebase] Failed to parse ${skillPath}:`, error);
         }
       }
       
-      const indexContent = `# Project Knowledge Index
+      const indexContent = `# Project Knowledge
 
-> 项目知识索引 - AI 会在 session 开始时读取此文件，了解项目知识结构
+> Project knowledge index. Read this first to understand available domain knowledge, then read relevant module SKILLs as needed.
 
 ${entries.join('\n')}`;
       
       const indexPath = join(ctx.directory, 'KNOWLEDGE.md');
       await writeTextFile(indexPath, indexContent);
       
-      return `🔄 知识索引重建完成
+      return `🔄 Knowledge index rebuilt
 
-扫描模块: ${skillFiles.length}
-成功解析: ${entries.length}
-索引位置: KNOWLEDGE.md`;
+Scanned modules: ${skillFiles.length}
+Successfully parsed: ${entries.length}
+Index location: KNOWLEDGE.md`;
       
     } catch (error) {
       console.error('[smart-codebase] Rebuild index command failed:', error);
-      return `❌ 重建索引失败: ${error instanceof Error ? error.message : String(error)}`;
+      return `❌ Rebuild failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   },
 });

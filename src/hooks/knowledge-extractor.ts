@@ -1,5 +1,6 @@
 import type { PluginInput, Hooks } from "@opencode-ai/plugin";
 import type { PluginConfig } from "../types";
+import { join } from "path";
 import { 
   writeModuleSkill, 
   updateGlobalIndex, 
@@ -9,6 +10,7 @@ import {
   type IndexEntry
 } from "../storage/knowledge-writer";
 import { unwrapData, extractTextFromParts, withTimeout } from "../utils/sdk-helpers";
+import { fileExists, readTextFile } from "../utils/fs-compat";
 import { displayExtractionResult } from "../display/feedback";
 
 type ToolExecuteAfterInput = Parameters<NonNullable<Hooks["tool.execute.after"]>>[0];
@@ -102,6 +104,20 @@ export async function extractKnowledge(
       .map((msg: string, idx: number) => `[User message ${idx + 1}]\n${msg}`)
       .join('\n\n');
 
+    const primaryFile = Array.from(modifiedFiles)[0];
+    const primaryModulePath = getModulePath(primaryFile, ctx.directory);
+    
+    const existingSkillPath = join(ctx.directory, primaryModulePath, '.knowledge', 'SKILL.md');
+    let existingSkillContent = '';
+    if (await fileExists(existingSkillPath)) {
+      existingSkillContent = await readTextFile(existingSkillPath);
+      console.log(`[smart-codebase] Found existing SKILL.md at ${existingSkillPath}, will merge`);
+    }
+
+    const existingSkillSection = existingSkillContent 
+      ? `\nEXISTING SKILL.md (merge with this):\n\`\`\`markdown\n${existingSkillContent}\n\`\`\`\n`
+      : '\nNo existing SKILL.md found. Create new.\n';
+
     const systemContext = `You are extracting knowledge for a Claude Skill file (SKILL.md).
 
 CONVERSATION HISTORY:
@@ -109,13 +125,19 @@ ${conversationContext}
 
 FILES MODIFIED:
 ${modifiedFilesList}
-
+${existingSkillSection}
 YOUR TASK:
 1. Use Read tool to examine the modified files
 2. Use git diff (via Bash) to see what changed
 3. Extract knowledge that would help future AI sessions
+4. If existing SKILL.md provided, MERGE new knowledge intelligently:
+   - Preserve valuable existing content
+   - Update outdated information with new learnings
+   - Add new sections for new topics
+   - Improve descriptions if new context makes them clearer
+   - Remove redundant or contradictory content
 
-OUTPUT FORMAT - Return JSON:
+OUTPUT FORMAT - Return JSON with COMPLETE merged content:
 {
   "skill": {
     "modulePath": "src/invoice",
@@ -134,8 +156,9 @@ OUTPUT FORMAT - Return JSON:
 GUIDELINES:
 - name: lowercase, hyphens only, max 64 chars (e.g., "invoice-processing")
 - description: Third person, includes "Use when..." trigger. Max 200 chars.
-- sections: Concise. Assume Claude knows basics. Only add project-specific knowledge.
-- content: Use \\n for newlines. No verbose explanations.
+- sections: COMPLETE list after merging. Include both existing and new sections.
+- content: Use \\n for newlines. No verbose explanations. Concise, project-specific.
+- relatedFiles: COMPLETE list after merging.
 
 Return ONLY valid JSON. If no significant learnings: {"skill": null}`;
 

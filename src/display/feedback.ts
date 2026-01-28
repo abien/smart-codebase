@@ -2,18 +2,18 @@ import type { ExtractionResult } from '../hooks/knowledge-extractor';
 
 export function displayExtractionResult(result: ExtractionResult): string {
   if (result.modulesUpdated === 0) {
-    return "本次会话未发现新知识点";
+    return "No new knowledge extracted";
   }
 
   const modulesText = result.modulesUpdated === 1 
-    ? `1 个模块` 
-    : `${result.modulesUpdated} 个模块`;
+    ? `1 module` 
+    : `${result.modulesUpdated} modules`;
   
   const sectionsText = result.sectionsAdded > 0 
-    ? `，新增 ${result.sectionsAdded} 个知识条目` 
+    ? `, ${result.sectionsAdded} sections added` 
     : '';
   
-  const indexText = result.indexUpdated ? '，已更新索引' : '';
+  const indexText = result.indexUpdated ? ', index updated' : '';
   
-  return `✨ 更新了 ${modulesText}${sectionsText}${indexText}`;
+  return `✨ Updated ${modulesText}${sectionsText}${indexText}`;
 }
