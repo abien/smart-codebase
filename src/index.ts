@@ -8,18 +8,11 @@ import { setPluginInput } from "./plugin-context";
 
 const SmartCodebasePlugin: Plugin = async (input) => {
   setPluginInput(input);
-  // 插件加载通知
-  await input.client.tui.showToast({
-    body: {
-      title: "smart-codebase",
-      message: "📚 插件已启用",
-      variant: "info",
-      duration: 3000,
-    },
-  }).catch(() => {});
 
   const contextInjector = createContextInjectorHook(input);
   const knowledgeExtractor = createKnowledgeExtractorHook(input);
+  
+  let hasShownWelcomeToast = false;
 
   return {
     tool: {
@@ -28,6 +21,18 @@ const SmartCodebasePlugin: Plugin = async (input) => {
       "sc-rebuild-index": rebuildIndexCommand,
     },
     "tool.execute.after": async (hookInput, output) => {
+      if (!hasShownWelcomeToast) {
+        hasShownWelcomeToast = true;
+        await input.client.tui.showToast({
+          body: {
+            title: "smart-codebase",
+            message: "📚 插件已启用",
+            variant: "info",
+            duration: 3000,
+          },
+        }).catch(() => {});
+      }
+      
       await contextInjector["tool.execute.after"]?.(hookInput, output);
       await knowledgeExtractor["tool.execute.after"]?.(hookInput, output);
     },
