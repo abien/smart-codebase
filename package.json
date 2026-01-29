@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsup",
     "clean": "rm -rf dist",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
