@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { extractCommand } from "./commands/extract";
 import { statusCommand } from "./commands/status";
 import { rebuildIndexCommand } from "./commands/rebuild-index";
+import { cleanupCommand } from "./commands/cleanup";
 import { createContextInjectorHook } from "./hooks/context-injector";
 import { createKnowledgeExtractorHook } from "./hooks/knowledge-extractor";
 import { setPluginInput } from "./plugin-context";
@@ -12,6 +13,7 @@ const ALL_COMMANDS = {
   "sc-extract": extractCommand,
   "sc-status": statusCommand,
   "sc-rebuild-index": rebuildIndexCommand,
+  "sc-cleanup": cleanupCommand,
 } as const;
 
 const COMMAND_CONFIGS = {
@@ -26,6 +28,10 @@ const COMMAND_CONFIGS = {
   "sc-rebuild-index": {
     template: "Use sc-rebuild-index to rebuild global knowledge index. Scans all .knowledge/ directories and rebuilds .knowledge/KNOWLEDGE.md.",
     description: "Rebuild knowledge index",
+  },
+  "sc-cleanup": {
+    template: "Use sc-cleanup to identify and remove low-usage SKILL files. Default is preview mode. Use --confirm to actually delete.",
+    description: "Clean up low-usage SKILL files",
   },
 } as const;
 

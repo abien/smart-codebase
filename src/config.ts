@@ -13,6 +13,11 @@ const DEFAULT_CONFIG: PluginConfig = {
   autoInject: true,
   disabledCommands: [],
   extractionMaxTokens: 8000,
+  cleanupThresholds: {
+    minAgeDays: 60,
+    minAccessCount: 5,
+    maxInactiveDays: 60,
+  },
 };
 
 export function loadConfig(): PluginConfig {
