@@ -56,13 +56,14 @@ graph TB
 ## ⚙️ How It Works
 
 1. **You work normally** - Edit files, debug issues, make decisions
-2. **Session goes idle** - After 15 seconds of inactivity
-3. **Extractor analyzes** - Examines what changed and why
-4. **Knowledge captured** - Stored in `<module>/.knowledge/SKILL.md`
-5. **Index updated** - Global index at `.opencode/skills/<project>/SKILL.md`
-6. **Next session starts** - AI reads the project skill, then relevant module skills
+2. **Session goes idle** - After 15 seconds of inactivity, toast notification appears
+3. **You can interrupt** - Send a message to cancel extraction and continue working
+4. **Extractor analyzes** - AI examines what changed and why (with progress notifications)
+5. **Knowledge captured** - Stored in `.opencode/skills/<project>/modules/<module>.md`
+6. **Index updated** - Global index at `.opencode/skills/<project>/SKILL.md`
+7. **Next session starts** - AI reads project skill, then discovers relevant module skills
 
-**The plugin accumulates knowledge for you. Just focus on coding.**
+**The plugin works silently in the background. Toast notifications keep you informed without interrupting your flow.**
 
 ---
 
