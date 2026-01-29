@@ -29,16 +29,23 @@ export async function writeModuleSkill(
   modulePath: string,
   skill: SkillContent
 ): Promise<string> {
-  const knowledgeDir = join(projectRoot, modulePath, '.knowledge');
-  const skillPath = join(knowledgeDir, 'SKILL.md');
-  const lockFile = join(knowledgeDir, '.lock');
+  const projectName = getProjectSkillName(projectRoot);
+  const skillName = toSkillName(modulePath);
+  const skillDir = join(projectRoot, '.opencode', 'skills', projectName, 'modules');
+  const skillPath = join(skillDir, `${skillName}.md`);
+  const lockFile = join(skillDir, '.lock');
 
-  await mkdir(knowledgeDir, { recursive: true });
+  await mkdir(skillDir, { recursive: true });
 
   const lock = await acquireLock(lockFile, 5000);
 
   try {
-    const content = formatSkillContent(skill);
+    let existingContent = '';
+    if (await fileExists(skillPath)) {
+      existingContent = await readTextFile(skillPath);
+    }
+
+    const content = formatSkillContent(skill, existingContent);
     await writeTextFile(skillPath, content);
     return skillPath;
   } finally {
@@ -46,12 +53,25 @@ export async function writeModuleSkill(
   }
 }
 
-function formatSkillContent(skill: SkillContent): string {
+function formatSkillContent(skill: SkillContent, existingContent?: string): string {
   const lines: string[] = [];
+
+  let createdAt = new Date().toISOString();
+  const lastUpdated = new Date().toISOString();
+
+  if (existingContent) {
+    const createdMatch = existingContent.match(/created_at:\s*([^\s]+)/);
+    if (createdMatch) {
+      createdAt = createdMatch[1];
+    }
+  }
 
   lines.push('---');
   lines.push(`name: ${skill.metadata.name}`);
   lines.push(`description: ${skill.metadata.description}`);
+  lines.push('usage:');
+  lines.push(`  created_at: ${createdAt}`);
+  lines.push(`  last_updated: ${lastUpdated}`);
   lines.push('---');
   lines.push('');
 
