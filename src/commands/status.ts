@@ -93,6 +93,19 @@ async function getUsageStats(projectRoot: string): Promise<UsageStats> {
   const minAccessThreshold = config.cleanupThresholds?.minAccessCount || 5;
   
   const skillsDir = join(projectRoot, '.opencode', 'skills');
+  
+  if (!(await fileExists(skillsDir))) {
+    return {
+      totalSkills: 0,
+      totalAccesses: 0,
+      lowFrequencyCount: 0,
+      minAccessThreshold,
+      highUsageCount: 0,
+      mediumUsageCount: 0,
+      lowUsageCount: 0,
+    };
+  }
+  
   const moduleSkills = await findFiles('*/modules/*.md', {
     cwd: skillsDir,
     absolute: true,

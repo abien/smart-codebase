@@ -58,6 +58,12 @@ async function findEligibleSkills(
   projectRoot: string,
   thresholds: CleanupThresholds
 ): Promise<EligibleSkill[]> {
+  const skillsDir = join(projectRoot, '.opencode', 'skills');
+  
+  if (!(await fileExists(skillsDir))) {
+    return [];
+  }
+  
   const pattern = ".opencode/skills/*/modules/*.md";
   const skillFiles = await findFiles(pattern, {
     cwd: projectRoot,
