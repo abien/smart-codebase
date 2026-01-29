@@ -92,6 +92,16 @@ export async function extractKnowledge(
 
      extractionSessionID = createResult.data.id;
      console.log(`[smart-codebase] Created extraction session: ${extractionSessionID}`);
+     
+     // Show toast when subsession is created
+     await ctx.client.tui.showToast({
+       body: {
+         title: "smart-codebase",
+         message: "正在创建知识提取子会话，开始分析...",
+         variant: "info",
+         duration: 3000,
+       },
+     }).catch(() => {});
 
      const primaryFile = Array.from(modifiedFiles)[0];
      const primaryModulePath = getModulePath(primaryFile, ctx.directory);
@@ -330,6 +340,21 @@ export function createKnowledgeExtractorHook(ctx: PluginInput, config?: PluginCo
       }
 
       const debounceMs = config?.debounceMs ?? 15000;
+      
+      // Show toast when countdown starts
+      const toolCalls = sessionToolCalls.get(sessionID);
+      if (toolCalls && toolCalls.length > 0) {
+        await ctx.client.tui.showToast({
+          body: {
+            title: "smart-codebase",
+            message: `会话空闲，${debounceMs / 1000}秒后开始知识提取...`,
+            variant: "info",
+            duration: 3000,
+          },
+        }).catch(() => {});
+        console.log(`[smart-codebase] Countdown toast shown for session ${sessionID}`);
+      }
+      
       const timer = setTimeout(async () => {
         const extractionResult = await extractKnowledge(ctx, sessionID, config);
 
