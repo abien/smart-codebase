@@ -3,9 +3,9 @@ import type { PluginConfig, ToolCallRecord } from "../types";
 import { join } from "path";
 import { 
   writeModuleSkill, 
-  updateGlobalIndex,
   updateSkillIndex,
   getModulePath,
+  getProjectSkillName,
   toSkillName,
   type SkillContent,
   type IndexEntry
@@ -107,89 +107,44 @@ export async function extractKnowledge(
        ? `\nEXISTING SKILL.md (merge with this):\n\`\`\`markdown\n${existingSkillContent}\n\`\`\`\n`
        : '\nNo existing SKILL.md found. Create new.\n';
 
-     const systemContext = `You are smart-codebase: a knowledge distillation agent that writes/updates a module-level SKILL.md.
+     const systemContext = `You are smart-codebase: a knowledge distillation agent that writes/updates module-level SKILL.md files.
 
-PRIMARY SIGNAL - FULL CONVERSATION TRANSCRIPT (User + Assistant):
-${preprocessed.conversation || '(No conversation transcript available)'}
+PRIMARY SIGNAL - CONVERSATION:
+${preprocessed.conversation || '(No conversation)'}
 
-SECONDARY SIGNALS (use to verify / add file paths / fill gaps; may be truncated):
-
-FILES TOUCHED:
-${preprocessed.modifiedFiles || '(none)'}
-
-GIT DIFF:
-${preprocessed.gitDiff || '(No git diff available)'}
-
-TOOL CALLS (activity trail):
-${preprocessed.toolCallsSummary || '(none)'}
-
-SNIPPETS (from prior reads; partial):
-${preprocessed.codeSnippets || '(none)'}
+SECONDARY SIGNALS:
+- Files: ${preprocessed.modifiedFiles || '(none)'}
+- Diff: ${preprocessed.gitDiff || '(none)'}
+- Tools: ${preprocessed.toolCallsSummary || '(none)'}
+- Snippets: ${preprocessed.codeSnippets || '(none)'}
 ${existingSkillSection}
-YOUR TASK:
-Extract durable, project-specific knowledge that helps future AI sessions understand what was done, why, and how to work with it safely.
+TASK: Extract durable, project-specific knowledge for future AI sessions.
 
-EXTRACTION GUIDELINES:
-1. PRIORITIZE the conversation: the user's intent + the assistant's explanations are valuable knowledge
-2. If the user mentions "I added/fixed/implemented X", focus on X even if phrased as a question
-3. IGNORE incidental changes: Config files (.husky, .vscode, package.json) unless they're the main work
-4. BE PRACTICAL: If there's real implementation knowledge (patterns, gotchas, decisions), extract it
-5. DON'T be overly conservative: Code changes + user context = valuable knowledge
+EXTRACT when: implementation patterns, design decisions, gotchas, bug fixes with explanations, user-described features.
+SKIP when: pure config changes, trivial edits (typos, formatting), no actionable knowledge.
 
-INCREMENTAL READING (TOOLS ARE ALLOWED):
-- You MAY use tools to verify details or fill missing context
-- Be surgical: do not read entire files
-- Progressive disclosure:
-  1) skim file list + diff headers to pick targets
-  2) read file header/exports/types first (small read with offset/limit)
-  3) grep/ast-grep for symbols/strings
-  4) read narrow windows around definitions, expand only if needed
-- Stop once you can write accurate SKILL.md knowledge
+MERGE with existing SKILL.md: preserve valuable content, update outdated info, add new sections, remove redundant content.
 
-Common scenarios where you SHOULD extract:
-- User says "I added X feature" → Extract knowledge about X (even if they're asking where they put it)
-- User describes implementation details → Extract the patterns/decisions
-- User fixed a bug and explains the cause → Extract the gotcha
-- Assistant explained a design decision → Capture the reasoning
-
-Skip extraction ONLY if:
-- Pure config/tooling changes with no user context
-- User just asked questions without describing any work
-- Changes are truly trivial (typo fixes, formatting)
-
-If existing SKILL.md provided, MERGE new knowledge intelligently:
-- Preserve valuable existing content
-- Update outdated information with new learnings
-- Add new sections for new topics
-- Improve descriptions if new context makes them clearer
-- Remove redundant or contradictory content
-
-OUTPUT FORMAT - Return JSON with COMPLETE merged content:
+OUTPUT FORMAT:
 {
   "skill": {
     "modulePath": "src/invoice",
     "name": "invoice-processing",
-    "description": "Handles invoice form validation and submission. Use when modifying invoice-related forms or validation logic.",
-    "sections": [
-      {
-        "heading": "Form validation",
-        "content": "Amount field uses Decimal type to avoid precision issues.\\nInvoice number format: INV-YYYYMMDD-XXXX"
-      }
-    ],
+    "description": "发票表单验证。金额用 Decimal 避免精度问题，格式 INV-YYYYMMDD-XXXX。修改发票表单或校验逻辑时使用。",
+    "sections": [{"heading": "表单验证", "content": "金额字段用 Decimal 类型避免精度问题。\\n发票号格式：INV-YYYYMMDD-XXXX"}],
     "relatedFiles": ["src/invoice/form.tsx"]
   }
 }
 
-GUIDELINES:
-- name: lowercase, hyphens only, max 64 chars (e.g., "invoice-processing")
-- description: Third person, includes "Use when..." trigger. Max 200 chars.
-- sections: COMPLETE list after merging. Include both existing and new sections.
-- content: Use \\n for newlines. No verbose explanations. Concise, project-specific.
-- relatedFiles: COMPLETE list after merging.
+RULES:
+- name: English, lowercase-hyphens, max 64 chars
+- description: Max 300 chars. What + key gotchas + "Use when..." trigger
+- sections: Complete merged list with heading + content
+- Language: Write description/headings/content in USER'S LANGUAGE (detect from conversation). Keep name/code/paths in English.
 
-Return ONLY valid JSON. If no significant learnings: {"skill": null}`;
+Return ONLY valid JSON. No knowledge: {"skill": null}`;
 
-     const extractionPrompt = `Produce the merged SKILL JSON now. Use the conversation as primary signal; verify with diff/snippets as needed; use tools incrementally if required. Return ONLY valid JSON (no markdown fences).`;
+     const extractionPrompt = `Output the merged SKILL JSON now. Return ONLY valid JSON.`;
 
     const model = parseModelConfig(config?.extractionModel);
     console.log(`[smart-codebase] Sending extraction prompt to AI...${model ? ` (model: ${config?.extractionModel})` : ''}`);
@@ -227,11 +182,12 @@ Return ONLY valid JSON. If no significant learnings: {"skill": null}`;
     }
 
     const s = extracted.skill;
+    const modulePath = s.modulePath || '.';
 
     const skillContent: SkillContent = {
       metadata: {
-        name: s.name || toSkillName(s.modulePath),
-        description: s.description || `Handles ${s.modulePath} module. Use when working on related files.`
+        name: s.name || toSkillName(modulePath),
+        description: s.description || `Handles ${modulePath} module. Use when working on related files.`
       },
       sections: (s.sections || []).map((sec: any) => ({
         heading: sec.heading,
@@ -240,24 +196,29 @@ Return ONLY valid JSON. If no significant learnings: {"skill": null}`;
       relatedFiles: s.relatedFiles || []
     };
 
-    const skillPath = await writeModuleSkill(
-      ctx.directory,
-      s.modulePath || '.',
-      skillContent
-    );
-    console.log(`[smart-codebase] Updated module skill: ${skillPath}`);
-    result.modulesUpdated = 1;
+    // Only write to module .knowledge/ if not root level
+    // Root level knowledge goes directly to .opencode/skills/<project>/
+    if (modulePath !== '.') {
+      const skillPath = await writeModuleSkill(
+        ctx.directory,
+        modulePath,
+        skillContent
+      );
+      console.log(`[smart-codebase] Updated module skill: ${skillPath}`);
+      result.modulesUpdated = 1;
+    } else {
+      console.log(`[smart-codebase] Root-level knowledge, writing directly to OpenCode skill index`);
+    }
     result.sectionsAdded = skillContent.sections.length;
 
     const indexEntry: IndexEntry = {
       name: skillContent.metadata.name,
       description: skillContent.metadata.description,
-      location: `${s.modulePath || '.'}/.knowledge/SKILL.md`
+      location: modulePath === '.' 
+        ? `.opencode/skills/${getProjectSkillName(ctx.directory)}/SKILL.md`
+        : `${modulePath}/.knowledge/SKILL.md`
     };
 
-     await updateGlobalIndex(ctx.directory, indexEntry);
-     console.log(`[smart-codebase] Updated global knowledge index`);
-     
      await updateSkillIndex(ctx.directory, indexEntry);
      console.log(`[smart-codebase] Updated OpenCode skill index`);
      result.indexUpdated = true;
