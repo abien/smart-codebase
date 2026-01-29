@@ -47,6 +47,8 @@ graph TB
 - [⚡ Commands](#-commands)
 - [⚙️ Configuration](#️-configuration)
 - [📁 File Structure](#-file-structure)
+- [📊 Usage Statistics](#-usage-statistics)
+- [🧹 Cleanup Command](#-cleanup-command)
 - [🛠️ Development](#️-development)
 
 ---
@@ -90,9 +92,11 @@ Add to your `opencode.json`:
 
 | Command | Description |
 |---------|-------------|
-| `/sc-status` | Show knowledge base status |
+| `/sc-status` | Show knowledge base status and usage statistics |
 | `/sc-extract` | Manually trigger knowledge extraction |
 | `/sc-rebuild-index` | Rebuild `.knowledge/KNOWLEDGE.md` from all SKILL.md files |
+| `/sc-cleanup` | Clean up low-usage SKILL files (preview mode) |
+| `/sc-cleanup --confirm` | Actually delete low-usage SKILL files |
 
 ---
 
@@ -120,6 +124,15 @@ No configuration required by default. To customize, create `~/.config/opencode/s
 | `extractionModel` | - | Model for extraction, format: `providerID/modelID` |
 | `extractionMaxTokens` | `8000` | Max token budget for extraction context |
 | `disabledCommands` | `[]` | Commands to disable, e.g. `["sc-rebuild-index"]` |
+| `cleanupThresholds` | See below | Thresholds for cleanup command |
+
+#### cleanupThresholds
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `cleanupThresholds.minAgeDays` | `60` | Minimum age in days for cleanup eligibility |
+| `cleanupThresholds.minAccessCount` | `5` | Maximum access count for cleanup eligibility |
+| `cleanupThresholds.maxInactiveDays` | `60` | Maximum days since last access for cleanup eligibility |
 
 ---
 
@@ -130,22 +143,70 @@ project/
 ├── .opencode/
 │   └── skills/
 │       └── <project-name>/
-│           └── SKILL.md          # Project skill
+│           ├── SKILL.md          # Project skill (main index)
+│           └── modules/
+│               ├── src-auth.md   # Auth module knowledge
+│               └── src-api.md    # API module knowledge
 │
 ├── src/
 │   ├── auth/
-│   │   ├── .knowledge/
-│   │   │   └── SKILL.md          # Auth module knowledge
 │   │   ├── session.ts
 │   │   └── jwt.ts
 │   │
-│   └── payments/
-│       ├── .knowledge/
-│       │   └── SKILL.md          # Payments module knowledge
-│       └── stripe.ts
+│   └── api/
+│       └── routes.ts
 ```
 
-The project skill at `.opencode/skills/<project>/SKILL.md` serves as the global index and is auto-discovered by OpenCode. Module-level knowledge is stored in `.knowledge/SKILL.md` within each module directory.
+The project skill at `.opencode/skills/<project>/SKILL.md` serves as the global index and is auto-discovered by OpenCode. Module-level knowledge is stored in `.opencode/skills/<project>/modules/<module-name>.md`.
+
+---
+
+### Usage Statistics
+
+The `/sc-status` command now displays:
+- Total SKILL count
+- Total access count across all SKILLs
+- Low-frequency SKILL count (based on cleanupThresholds)
+- Usage breakdown (high/medium/low)
+
+Example output:
+```
+📊 Usage Statistics:
+Total SKILLs: 15
+Total accesses: 234
+Low-frequency SKILLs (< 5 accesses): 3
+
+Usage breakdown:
+  - High usage (≥10 accesses): 8 SKILLs
+  - Medium usage (5-10): 4 SKILLs
+  - Low usage (<5): 3 SKILLs
+```
+
+---
+
+### Cleanup Command
+
+Remove low-usage SKILL files based on configurable thresholds.
+
+**Preview mode (default)**:
+```bash
+/sc-cleanup
+```
+
+Lists eligible SKILLs without deleting them.
+
+**Confirm mode**:
+```bash
+/sc-cleanup --confirm
+```
+
+Actually deletes files and updates the main index.
+
+**Cleanup Criteria (AND logic)**:
+A SKILL is eligible for cleanup when ALL conditions are met:
+1. Age ≥ `minAgeDays` (default: 60 days)
+2. Access count < `minAccessCount` (default: 5)
+3. Days since last access ≥ `maxInactiveDays` (default: 60 days)
 
 ---
 
